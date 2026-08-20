@@ -159,6 +159,24 @@ class AppLocalizationsIt extends AppLocalizations {
   String get hotkey => 'Hotkey';
 
   @override
+  String get toggleHotkey => 'Alterna sospensione / ripresa';
+
+  @override
+  String get suspendHotkey => 'Solo sospensione';
+
+  @override
+  String get resumeHotkey => 'Solo ripresa';
+
+  @override
+  String get hotkeyNotSet => 'Non impostato';
+
+  @override
+  String get hotkeyAlreadyAssigned => 'Questa scorciatoia è già assegnata.';
+
+  @override
+  String get resetHotkey => 'Reimposta scorciatoia';
+
+  @override
   String get recordNewHotkey => 'Record a new hotkey';
 
   @override

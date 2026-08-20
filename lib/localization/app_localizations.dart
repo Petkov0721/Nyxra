@@ -390,6 +390,42 @@ abstract class AppLocalizations {
   /// **'Hotkey'**
   String get hotkey;
 
+  /// Label for the hotkey that toggles between suspended and resumed states
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle suspend / resume'**
+  String get toggleHotkey;
+
+  /// Label for the hotkey that only suspends an application
+  ///
+  /// In en, this message translates to:
+  /// **'Suspend only'**
+  String get suspendHotkey;
+
+  /// Label for the hotkey that only resumes an application
+  ///
+  /// In en, this message translates to:
+  /// **'Resume only'**
+  String get resumeHotkey;
+
+  /// Label shown when no hotkey is configured
+  ///
+  /// In en, this message translates to:
+  /// **'Not set'**
+  String get hotkeyNotSet;
+
+  /// Error shown when a hotkey is already assigned to another action
+  ///
+  /// In en, this message translates to:
+  /// **'This hotkey is already assigned.'**
+  String get hotkeyAlreadyAssigned;
+
+  /// Tooltip for resetting a hotkey to its default
+  ///
+  /// In en, this message translates to:
+  /// **'Reset hotkey'**
+  String get resetHotkey;
+
   /// Instruction to record a new hotkey
   ///
   /// In en, this message translates to:

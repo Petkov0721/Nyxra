@@ -37,8 +37,25 @@ class Win32ProcessRepository extends ProcessRepository {
 
   @override
   Future<bool> exists(int pid) async {
-    final name = await _getExecutableName(pid);
-    return (name == '') ? false : true;
+    final processHandle = OpenProcess(
+      PROCESS_QUERY_LIMITED_INFORMATION,
+      FALSE,
+      pid,
+    );
+
+    if (processHandle != NULL) {
+      CloseHandle(processHandle);
+      return true;
+    }
+
+    final error = GetLastError();
+    if (error == ERROR_INVALID_PARAMETER) return false;
+
+    // Access-denied and other query failures do not prove that a process is
+    // dead. Keeping its tracking is safer than treating a live process as
+    // gone and potentially suspending a different foreground application.
+    log.w('Unable to verify process $pid (Win32 error $error); assuming alive.');
+    return true;
   }
 
   @override
@@ -56,32 +73,34 @@ class Win32ProcessRepository extends ProcessRepository {
       pid,
     );
 
-    // Pointer that will be populated with the full executable path.
-    final path = calloc<Uint16>(MAX_PATH).cast<Utf16>();
-
-    // If the GetModuleFileNameEx function succeeds, the return value specifies
-    // the length of the string copied to the buffer.
-    // If the function fails, the return value is zero.
-    final result = GetModuleFileNameEx(processHandle, NULL, path, MAX_PATH);
-
-    if (result == 0) {
-      log.w('Error getting executable name: ${GetLastError()}');
+    if (processHandle == NULL) {
+      log.w('Error opening process $pid: ${GetLastError()}');
       return '';
     }
 
-    // Pull the value from the pointer.
-    // Discard all of path except the executable name.
-    final executable = path.toDartString().split('\\').last;
+    // Pointer that will be populated with the full executable path.
+    final path = calloc<Uint16>(MAX_PATH).cast<Utf16>();
+    try {
+      // If the GetModuleFileNameEx function succeeds, the return value
+      // specifies the length of the string copied to the buffer. If it fails,
+      // the return value is zero.
+      final result = GetModuleFileNameEx(processHandle, NULL, path, MAX_PATH);
 
-    // Free the pointer's memory.
-    calloc.free(path);
+      if (result == 0) {
+        log.w('Error getting executable name: ${GetLastError()}');
+        return '';
+      }
 
-    final handleClosed = CloseHandle(processHandle);
-    if (handleClosed == 0) {
-      log.e('get executable failed to close the process handle.');
+      // Pull the value from the pointer and discard the containing path.
+      return path.toDartString().split('\\').last;
+    } finally {
+      calloc.free(path);
+
+      final handleClosed = CloseHandle(processHandle);
+      if (handleClosed == 0) {
+        log.e('get executable failed to close the process handle.');
+      }
     }
-
-    return executable;
   }
 
   @override

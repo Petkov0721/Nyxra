@@ -87,5 +87,16 @@ void main() {
       await service.removeHotkey(hotKey);
       expect(hotKeyManager.registeredHotKeyList, isNot(contains(hotKey)));
     });
+
+    test('removeHotkey() is safe when the hotkey is already unregistered', () async {
+      final service = HotkeyService();
+      final hotKey = HotKey(key: PhysicalKeyboardKey.f9);
+
+      await service.addHotkey(hotKey);
+      await service.removeHotkey(hotKey);
+      await service.removeHotkey(hotKey);
+
+      expect(hotKeyManager.registeredHotKeyList, isNot(contains(hotKey)));
+    });
   });
 }

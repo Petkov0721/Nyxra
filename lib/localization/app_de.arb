@@ -42,5 +42,11 @@
   "aboutTitle": "Über",
   "version": "Nyrna Version",
   "homepage": "Nyrna Homepage",
-  "repository": "GitHub Repository"
+  "repository": "GitHub Repository",
+  "toggleHotkey": "Pausieren / Fortsetzen umschalten",
+  "suspendHotkey": "Nur pausieren",
+  "resumeHotkey": "Nur fortsetzen",
+  "hotkeyNotSet": "Nicht festgelegt",
+  "hotkeyAlreadyAssigned": "Dieser Hotkey ist bereits zugewiesen.",
+  "resetHotkey": "Hotkey zurücksetzen"
 }

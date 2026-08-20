@@ -42,5 +42,11 @@
   "aboutTitle": "Informazioni",
   "version": "Versione di Nyrna",
   "homepage": "Homepage di Nyrna",
-  "repository": "Repository GitHub"
+  "repository": "Repository GitHub",
+  "toggleHotkey": "Alterna sospensione / ripresa",
+  "suspendHotkey": "Solo sospensione",
+  "resumeHotkey": "Solo ripresa",
+  "hotkeyNotSet": "Non impostato",
+  "hotkeyAlreadyAssigned": "Questa scorciatoia è già assegnata.",
+  "resetHotkey": "Reimposta scorciatoia"
 }

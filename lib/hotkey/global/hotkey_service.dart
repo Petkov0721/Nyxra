@@ -36,6 +36,11 @@ class HotkeyService {
   }
 
   Future<void> removeHotkey(HotKey hotkey) async {
+    if (!hotKeyManager.registeredHotKeyList.contains(hotkey)) {
+      log.w('Hotkey is not registered: ${hotkey.debugName}');
+      return;
+    }
+
     await hotKeyManager.unregister(hotkey);
   }
 }

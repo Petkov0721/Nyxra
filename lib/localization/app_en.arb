@@ -205,6 +205,30 @@
   "@hotkey": {
     "description": "Label for hotkey configuration"
   },
+  "toggleHotkey": "Toggle suspend / resume",
+  "@toggleHotkey": {
+    "description": "Label for the hotkey that toggles between suspended and resumed states"
+  },
+  "suspendHotkey": "Suspend only",
+  "@suspendHotkey": {
+    "description": "Label for the hotkey that only suspends an application"
+  },
+  "resumeHotkey": "Resume only",
+  "@resumeHotkey": {
+    "description": "Label for the hotkey that only resumes an application"
+  },
+  "hotkeyNotSet": "Not set",
+  "@hotkeyNotSet": {
+    "description": "Label shown when no hotkey is configured"
+  },
+  "hotkeyAlreadyAssigned": "This hotkey is already assigned.",
+  "@hotkeyAlreadyAssigned": {
+    "description": "Error shown when a hotkey is already assigned to another action"
+  },
+  "resetHotkey": "Reset hotkey",
+  "@resetHotkey": {
+    "description": "Tooltip for resetting a hotkey to its default"
+  },
   "recordNewHotkey": "Record a new hotkey",
   "@recordNewHotkey": {
     "description": "Instruction to record a new hotkey"

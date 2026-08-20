@@ -158,6 +158,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hotkey => 'Hotkey';
 
   @override
+  String get toggleHotkey => 'Toggle suspend / resume';
+
+  @override
+  String get suspendHotkey => 'Suspend only';
+
+  @override
+  String get resumeHotkey => 'Resume only';
+
+  @override
+  String get hotkeyNotSet => 'Not set';
+
+  @override
+  String get hotkeyAlreadyAssigned => 'This hotkey is already assigned.';
+
+  @override
+  String get resetHotkey => 'Reset hotkey';
+
+  @override
   String get recordNewHotkey => 'Record a new hotkey';
 
   @override
