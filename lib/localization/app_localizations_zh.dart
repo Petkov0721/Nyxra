@@ -155,6 +155,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get hotkey => '快捷键';
 
   @override
+  String get toggleHotkey => '切换挂起 / 恢复';
+
+  @override
+  String get suspendHotkey => '仅挂起';
+
+  @override
+  String get resumeHotkey => '仅恢复';
+
+  @override
+  String get hotkeyNotSet => '未设置';
+
+  @override
+  String get hotkeyAlreadyAssigned => '此快捷键已被占用。';
+
+  @override
+  String get resetHotkey => '重置快捷键';
+
+  @override
   String get recordNewHotkey => '录制新快捷键';
 
   @override

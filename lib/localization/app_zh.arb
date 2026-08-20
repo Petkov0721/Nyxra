@@ -205,6 +205,12 @@
   "@hotkey": {
     "description": "Label for hotkey configuration"
   },
+  "toggleHotkey": "切换挂起 / 恢复",
+  "suspendHotkey": "仅挂起",
+  "resumeHotkey": "仅恢复",
+  "hotkeyNotSet": "未设置",
+  "hotkeyAlreadyAssigned": "此快捷键已被占用。",
+  "resetHotkey": "重置快捷键",
   "recordNewHotkey": "录制新快捷键",
   "@recordNewHotkey": {
     "description": "Instruction to record a new hotkey"

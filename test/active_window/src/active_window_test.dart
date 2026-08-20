@@ -47,6 +47,7 @@ void main() {
   });
 
   setUp(() {
+    reset(appWindow);
     reset(argParser);
     ArgumentParser.instance = argParser;
     reset(nativePlatform);
@@ -64,20 +65,19 @@ void main() {
     when(nativePlatform.restoreWindow(any)).thenAnswer((_) async => true);
 
     // ProcessRepository
+    when(processRepository.exists(any)).thenAnswer((_) async => true);
+    when(
+      processRepository.getProcessStatus(any),
+    ).thenAnswer((_) async => ProcessStatus.normal);
+    when(processRepository.resume(any)).thenAnswer((_) async => true);
     when(processRepository.suspend(any)).thenAnswer((_) async => true);
 
     // StorageRepository
     when(
-      storageRepository.deleteValue(
-        any,
-        storageArea: anyNamed('storageArea'),
-      ),
+      storageRepository.deleteValue(any, storageArea: anyNamed('storageArea')),
     ).thenAnswer((_) async {});
     when(
-      storageRepository.getValue(
-        any,
-        storageArea: anyNamed('storageArea'),
-      ),
+      storageRepository.getValue(any, storageArea: anyNamed('storageArea')),
     ).thenAnswer((_) async => null);
     when(
       storageRepository.saveValue(
@@ -137,16 +137,145 @@ void main() {
       expect(successful, false);
     });
 
+    group('ensureSuspended:', () {
+      test(
+        'does not suspend an already-suspended tracked process again',
+        () async {
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => testProcess.pid);
+          when(
+            processRepository.getProcessStatus(testProcess.pid),
+          ).thenAnswer((_) async => ProcessStatus.suspended);
+
+          final successful = await activeWindow.ensureSuspended();
+
+          expect(successful, true);
+          verify(processRepository.exists(testProcess.pid)).called(1);
+          verify(processRepository.getProcessStatus(testProcess.pid)).called(1);
+          verifyNever(processRepository.suspend(any));
+          verifyNever(nativePlatform.checkActiveWindow());
+        },
+      );
+
+      test(
+        're-suspends the tracked process if it was externally resumed',
+        () async {
+          const trackedPid = 13579;
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => trackedPid);
+          when(
+            processRepository.getProcessStatus(trackedPid),
+          ).thenAnswer((_) async => ProcessStatus.normal);
+
+          final successful = await activeWindow.ensureSuspended();
+
+          expect(successful, true);
+          verify(processRepository.suspend(trackedPid)).called(1);
+          verifyNever(processRepository.suspend(testProcess.pid));
+          verifyNever(nativePlatform.checkActiveWindow());
+          verifyNever(
+            storageRepository.saveValue(
+              key: anyNamed('key'),
+              value: anyNamed('value'),
+              storageArea: anyNamed('storageArea'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'clears a dead target and suspends the current foreground process',
+        () async {
+          const deadPid = 24680;
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => deadPid);
+          when(processRepository.exists(deadPid)).thenAnswer((_) async => false);
+
+          final successful = await activeWindow.ensureSuspended();
+
+          expect(successful, true);
+          verify(
+            storageRepository.deleteValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verify(
+            storageRepository.deleteValue(
+              'windowId',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verifyNever(processRepository.getProcessStatus(deadPid));
+          verify(processRepository.suspend(testProcess.pid)).called(1);
+        },
+      );
+
+      test('does not suspend a target whose status is unknown', () async {
+        when(
+          storageRepository.getValue(
+            'pid',
+            storageArea: kActiveWindowStorageArea,
+          ),
+        ).thenAnswer((_) async => testProcess.pid);
+        when(
+          processRepository.getProcessStatus(testProcess.pid),
+        ).thenAnswer((_) async => ProcessStatus.unknown);
+
+        final successful = await activeWindow.ensureSuspended();
+
+        expect(successful, false);
+        verifyNever(processRepository.suspend(any));
+      });
+
+      test(
+        'tracks an already-suspended foreground process without suspending again',
+        () async {
+          when(
+            processRepository.getProcessStatus(testProcess.pid),
+          ).thenAnswer((_) async => ProcessStatus.suspended);
+
+          final successful = await activeWindow.ensureSuspended();
+
+          expect(successful, true);
+          verifyNever(processRepository.suspend(any));
+          verify(
+            storageRepository.saveValue(
+              key: 'pid',
+              value: testProcess.pid,
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verify(
+            storageRepository.saveValue(
+              key: 'windowId',
+              value: testWindow.id,
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+        },
+      );
+    });
+
     test(
       'active window being Nyrna calls hide on window and tries again (Linux)',
       () async {
         final nyrnaWindow = testWindow.copyWith(
           process: testProcess.copyWith(executable: 'nyrna'),
         );
-        when(nativePlatform.activeWindow).thenAnswerInOrder([
-          nyrnaWindow,
-          testWindow,
-        ]);
+        when(nativePlatform.activeWindow).thenAnswerInOrder([nyrnaWindow, testWindow]);
         final successful = await activeWindow.toggle();
         expect(successful, true);
         verify(nativePlatform.checkActiveWindow()).called(2);
@@ -160,10 +289,7 @@ void main() {
         final nyrnaWindow = testWindow.copyWith(
           process: testProcess.copyWith(executable: 'nyrna.exe'),
         );
-        when(nativePlatform.activeWindow).thenAnswerInOrder([
-          nyrnaWindow,
-          testWindow,
-        ]);
+        when(nativePlatform.activeWindow).thenAnswerInOrder([nyrnaWindow, testWindow]);
         final successful = await activeWindow.toggle();
         expect(successful, true);
         verify(nativePlatform.checkActiveWindow()).called(2);
@@ -189,20 +315,28 @@ void main() {
         verifyNever(nativePlatform.minimizeWindow(any));
       });
 
-      test('no-minimize flag received & no preference does not minimize', () async {
-        when(argParser.minimize).thenReturn(false);
-        final successful = await activeWindow.toggle();
-        expect(successful, true);
-        verifyNever(nativePlatform.minimizeWindow(any));
-      });
+      test(
+        'no-minimize flag received & no preference does not minimize',
+        () async {
+          when(argParser.minimize).thenReturn(false);
+          final successful = await activeWindow.toggle();
+          expect(successful, true);
+          verifyNever(nativePlatform.minimizeWindow(any));
+        },
+      );
 
-      test('no-minimize flag received & preference=true does not minimize', () async {
-        when(storageRepository.getValue('minimizeWindows')).thenAnswer((_) async => true);
-        when(argParser.minimize).thenReturn(false);
-        final successful = await activeWindow.toggle();
-        expect(successful, true);
-        verifyNever(nativePlatform.minimizeWindow(any));
-      });
+      test(
+        'no-minimize flag received & preference=true does not minimize',
+        () async {
+          when(
+            storageRepository.getValue('minimizeWindows'),
+          ).thenAnswer((_) async => true);
+          when(argParser.minimize).thenReturn(false);
+          final successful = await activeWindow.toggle();
+          expect(successful, true);
+          verifyNever(nativePlatform.minimizeWindow(any));
+        },
+      );
     });
 
     group('resuming:', () {
@@ -226,6 +360,9 @@ void main() {
             storageArea: kActiveWindowStorageArea,
           ),
         ).thenAnswer((_) async => suspendedWindow.id);
+        when(
+          processRepository.getProcessStatus(suspendedProcess.pid),
+        ).thenAnswer((_) async => ProcessStatus.suspended);
       });
 
       test('resumes suspended window', () async {
@@ -236,10 +373,16 @@ void main() {
         expect(successful, true);
         verify(processRepository.resume(suspendedProcess.pid)).called(1);
         verify(
-          storageRepository.getValue('windowId', storageArea: kActiveWindowStorageArea),
+          storageRepository.getValue(
+            'windowId',
+            storageArea: kActiveWindowStorageArea,
+          ),
         ).called(1);
         verify(
-          storageRepository.deleteValue('pid', storageArea: kActiveWindowStorageArea),
+          storageRepository.deleteValue(
+            'pid',
+            storageArea: kActiveWindowStorageArea,
+          ),
         ).called(1);
         verify(
           storageRepository.deleteValue(
@@ -257,10 +400,16 @@ void main() {
         expect(successful, false);
         verify(processRepository.resume(suspendedProcess.pid)).called(1);
         verifyNever(
-          storageRepository.getValue('windowId', storageArea: kActiveWindowStorageArea),
+          storageRepository.getValue(
+            'windowId',
+            storageArea: kActiveWindowStorageArea,
+          ),
         );
         verify(
-          storageRepository.deleteValue('pid', storageArea: kActiveWindowStorageArea),
+          storageRepository.deleteValue(
+            'pid',
+            storageArea: kActiveWindowStorageArea,
+          ),
         ).called(1);
         verify(
           storageRepository.deleteValue(
@@ -269,6 +418,124 @@ void main() {
           ),
         ).called(1);
       });
+    });
+
+    group('ensureResumed:', () {
+      test('is a successful no-op when no process is tracked', () async {
+        final successful = await activeWindow.ensureResumed();
+
+        expect(successful, true);
+        verifyNever(processRepository.exists(any));
+        verifyNever(processRepository.getProcessStatus(any));
+        verifyNever(processRepository.resume(any));
+        verifyNever(
+          storageRepository.deleteValue(
+            any,
+            storageArea: anyNamed('storageArea'),
+          ),
+        );
+        verifyNever(nativePlatform.restoreWindow(any));
+      });
+
+      test(
+        'clears and restores an externally-resumed tracked process',
+        () async {
+          const trackedPid = 97531;
+          const trackedWindowId = 'tracked-window';
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => trackedPid);
+          when(
+            storageRepository.getValue(
+              'windowId',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => trackedWindowId);
+          when(
+            processRepository.getProcessStatus(trackedPid),
+          ).thenAnswer((_) async => ProcessStatus.normal);
+
+          final successful = await activeWindow.ensureResumed();
+
+          expect(successful, true);
+          verifyNever(processRepository.resume(any));
+          verify(
+            storageRepository.deleteValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verify(
+            storageRepository.deleteValue(
+              'windowId',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verify(nativePlatform.restoreWindow(trackedWindowId)).called(1);
+        },
+      );
+
+      test(
+        'clears a dead tracked process without trying to resume it',
+        () async {
+          const deadPid = 86420;
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => deadPid);
+          when(processRepository.exists(deadPid)).thenAnswer((_) async => false);
+
+          final successful = await activeWindow.ensureResumed();
+
+          expect(successful, true);
+          verifyNever(processRepository.getProcessStatus(deadPid));
+          verifyNever(processRepository.resume(any));
+          verify(
+            storageRepository.deleteValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verify(
+            storageRepository.deleteValue(
+              'windowId',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).called(1);
+          verifyNever(nativePlatform.restoreWindow(any));
+        },
+      );
+
+      test(
+        'does not resume or clear a target whose status is unknown',
+        () async {
+          when(
+            storageRepository.getValue(
+              'pid',
+              storageArea: kActiveWindowStorageArea,
+            ),
+          ).thenAnswer((_) async => testProcess.pid);
+          when(
+            processRepository.getProcessStatus(testProcess.pid),
+          ).thenAnswer((_) async => ProcessStatus.unknown);
+
+          final successful = await activeWindow.ensureResumed();
+
+          expect(successful, false);
+          verifyNever(processRepository.resume(any));
+          verifyNever(
+            storageRepository.deleteValue(
+              any,
+              storageArea: anyNamed('storageArea'),
+            ),
+          );
+        },
+      );
     });
   });
 }

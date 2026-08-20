@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
@@ -5,6 +7,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nyrna/app_version/app_version.dart';
 import 'package:nyrna/apps_list/apps_list.dart';
+import 'package:nyrna/hotkey/global/hotkey_action.dart';
 import 'package:nyrna/hotkey/global/hotkey_service.dart';
 import 'package:nyrna/logs/logs.dart';
 import 'package:nyrna/native_platform/native_platform.dart';
@@ -28,6 +31,10 @@ import 'apps_list_cubit_test.mocks.dart';
 
 late AppsListCubit cubit;
 AppsListState get state => cubit.state;
+
+final toggleHotkey = HotKey(key: PhysicalKeyboardKey.again);
+final suspendHotkey = HotKey(key: PhysicalKeyboardKey.f11);
+final resumeHotkey = HotKey(key: PhysicalKeyboardKey.f12);
 
 const msPaintProcess = Process(
   executable: 'mspaint.exe',
@@ -84,6 +91,61 @@ final processRepository = MockProcessRepository();
 final storage = MockStorageRepository();
 final systemTrayManager = MockSystemTrayManager();
 final appVersion = MockAppVersion();
+late StreamController<HotKey> hotkeyController;
+
+class RecordingAppsListCubit extends AppsListCubit {
+  RecordingAppsListCubit()
+    : super(
+        appWindow: appWindow,
+        hotkeyService: hotkeyService,
+        nativePlatform: nativePlatform,
+        settingsCubit: settingsCubit,
+        processRepository: processRepository,
+        storage: storage,
+        systemTrayManager: systemTrayManager,
+        appVersion: appVersion,
+        testing: true,
+      );
+
+  final List<HotkeyAction> actions = [];
+
+  @override
+  Future<bool> toggleActiveWindow() async {
+    actions.add(HotkeyAction.toggle);
+    return true;
+  }
+
+  @override
+  Future<bool> suspendActiveWindow() async {
+    actions.add(HotkeyAction.suspend);
+    return true;
+  }
+
+  @override
+  Future<bool> resumeActiveWindow() async {
+    actions.add(HotkeyAction.resume);
+    return true;
+  }
+}
+
+class SerialRecordingAppsListCubit extends RecordingAppsListCubit {
+  final suspendGate = Completer<void>();
+  final List<String> sequence = [];
+
+  @override
+  Future<bool> suspendActiveWindow() async {
+    sequence.add('suspend:start');
+    await suspendGate.future;
+    sequence.add('suspend:end');
+    return true;
+  }
+
+  @override
+  Future<bool> resumeActiveWindow() async {
+    sequence.add('resume');
+    return true;
+  }
+}
 
 void main() {
   setUpAll(() async {
@@ -98,6 +160,11 @@ void main() {
     reset(storage);
     reset(systemTrayManager);
     reset(appVersion);
+    hotkeyController = StreamController<HotKey>.broadcast();
+
+    when(
+      hotkeyService.hotkeyTriggeredStream,
+    ).thenAnswer((_) => hotkeyController.stream);
 
     when(appVersion.latest()).thenAnswer((_) async => '1.0.0');
     when(appVersion.running()).thenReturn('1.0.0');
@@ -117,7 +184,9 @@ void main() {
         autoStart: false,
         autoRefresh: false,
         closeToTray: false,
-        hotKey: HotKey(key: PhysicalKeyboardKey.again),
+        hotKey: toggleHotkey,
+        suspendHotKey: suspendHotkey,
+        resumeHotKey: resumeHotkey,
         minimizeWindows: true,
         pinSuspendedWindows: false,
         refreshInterval: 5,
@@ -149,9 +218,51 @@ void main() {
     );
   });
 
+  tearDown(() async {
+    await cubit.close();
+    await hotkeyController.close();
+  });
+
   group('AppCubit:', () {
     test('initial state has no windows', () {
       expect(state.windows.length, 0);
+    });
+
+    group('global hotkey actions:', () {
+      test('routes toggle, suspend, and resume bindings separately', () async {
+        await cubit.close();
+        final recordingCubit = RecordingAppsListCubit();
+        cubit = recordingCubit;
+        await pumpEventQueue();
+
+        await recordingCubit.handleHotkey(toggleHotkey);
+        await recordingCubit.handleHotkey(suspendHotkey);
+        await recordingCubit.handleHotkey(resumeHotkey);
+
+        expect(
+          recordingCubit.actions,
+          [HotkeyAction.toggle, HotkeyAction.suspend, HotkeyAction.resume],
+        );
+      });
+
+      test('serializes rapid opposing hotkey commands', () async {
+        await cubit.close();
+        final recordingCubit = SerialRecordingAppsListCubit();
+        cubit = recordingCubit;
+        await pumpEventQueue();
+
+        hotkeyController
+          ..add(suspendHotkey)
+          ..add(resumeHotkey);
+        await pumpEventQueue(times: 5);
+
+        expect(recordingCubit.sequence, ['suspend:start']);
+
+        recordingCubit.suspendGate.complete();
+        await pumpEventQueue();
+
+        expect(recordingCubit.sequence, ['suspend:start', 'suspend:end', 'resume']);
+      });
     });
 
     test('new window is added to state', () async {
@@ -469,6 +580,8 @@ void main() {
             autoRefresh: false,
             closeToTray: false,
             hotKey: HotKey(key: PhysicalKeyboardKey.again),
+            suspendHotKey: suspendHotkey,
+            resumeHotKey: resumeHotkey,
             minimizeWindows: true,
             pinSuspendedWindows: false,
             refreshInterval: 5,

@@ -20,6 +20,12 @@ abstract class SettingsState with _$SettingsState {
     /// The hotkey to toggle active application suspend.
     required HotKey hotKey,
 
+    /// The hotkey that ensures the active application is suspended.
+    HotKey? suspendHotKey,
+
+    /// The hotkey that ensures the previously suspended application is resumed.
+    HotKey? resumeHotKey,
+
     /// If true the window will be automatically minimized when suspending and
     /// restored when resuming.
     required bool minimizeWindows,
@@ -37,12 +43,26 @@ abstract class SettingsState with _$SettingsState {
     required bool working,
   }) = _SettingsState;
 
+  /// Private constructor required for custom Freezed methods.
+  const SettingsState._();
+
+  /// Returns the configured hotkey for [action], if one is configured.
+  HotKey? hotkeyFor(HotkeyAction action) {
+    return switch (action) {
+      HotkeyAction.toggle => hotKey,
+      HotkeyAction.suspend => suspendHotKey,
+      HotkeyAction.resume => resumeHotKey,
+    };
+  }
+
   factory SettingsState.initial() => SettingsState(
     appSpecificHotKeys: [],
     autoStart: false,
     autoRefresh: true,
     closeToTray: false,
     hotKey: defaultHotkey,
+    suspendHotKey: null,
+    resumeHotKey: null,
     minimizeWindows: true,
     pinSuspendedWindows: false,
     refreshInterval: 5,

@@ -4,10 +4,12 @@ import 'dart:io' as io;
 import 'package:collection/collection.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:hotkey_manager/hotkey_manager.dart';
 
 import '../../../settings/cubit/settings_cubit.dart';
 import '../../active_window/active_window.dart';
 import '../../app_version/app_version.dart';
+import '../../hotkey/global/hotkey_action.dart';
 import '../../hotkey/global/hotkey_service.dart';
 import '../../logs/logs.dart';
 import '../../native_platform/native_platform.dart';
@@ -28,6 +30,13 @@ class AppsListCubit extends Cubit<AppsListState> {
   final StorageRepository _storage;
   final SystemTrayManager _systemTrayManager;
   final AppVersion _appVersion;
+
+  StreamSubscription<HotKey>? _hotkeySubscription;
+  StreamSubscription<SystemTrayEvent>? _systemTraySubscription;
+
+  /// Serializes hotkey work so a follow-up command cannot observe partially
+  /// persisted suspend state from the previous command.
+  Future<void> _hotkeyActionQueue = Future<void>.value();
 
   AppsListCubit({
     required AppWindow appWindow,
@@ -53,6 +62,8 @@ class AppsListCubit extends Cubit<AppsListState> {
 
   Future<void> _initialize() async {
     await _fetchWindows();
+    if (isClosed) return;
+
     emit(state.copyWith(loading: false));
     setAutoRefresh(
       autoRefresh: _settingsCubit.state.autoRefresh,
@@ -82,7 +93,7 @@ class AppsListCubit extends Cubit<AppsListState> {
 
     windows.sortWindows(_settingsCubit.state.pinSuspendedWindows);
 
-    emit(state.copyWith(windows: windows));
+    if (!isClosed) emit(state.copyWith(windows: windows));
   }
 
   /// Updates the list of windows with favorite data.
@@ -131,6 +142,8 @@ class AppsListCubit extends Cubit<AppsListState> {
     final updateAvailable = (updateHasBeenIgnored)
         ? false
         : await _appVersion.updateAvailable();
+    if (isClosed) return;
+
     emit(
       state.copyWith(
         runningVersion: runningVersion,
@@ -219,16 +232,84 @@ class AppsListCubit extends Cubit<AppsListState> {
     }
   }
 
-  Future<bool> toggleActiveWindow() async {
-    final activeWindow = ActiveWindow(
-      _appWindow,
-      _nativePlatform,
-      _processRepository,
-      _storage,
-    );
+  ActiveWindow get _activeWindow => ActiveWindow(
+    _appWindow,
+    _nativePlatform,
+    _processRepository,
+    _storage,
+  );
 
-    await _nativePlatform.checkActiveWindow();
-    return await activeWindow.toggle();
+  Future<bool> toggleActiveWindow() async {
+    return await _activeWindow.toggle();
+  }
+
+  Future<bool> suspendActiveWindow() async {
+    return await _activeWindow.ensureSuspended();
+  }
+
+  Future<bool> resumeActiveWindow() async {
+    return await _activeWindow.ensureResumed();
+  }
+
+  Future<bool> _performActiveWindowAction(HotkeyAction action) async {
+    switch (action) {
+      case HotkeyAction.toggle:
+        return await toggleActiveWindow();
+      case HotkeyAction.suspend:
+        return await suspendActiveWindow();
+      case HotkeyAction.resume:
+        return await resumeActiveWindow();
+    }
+  }
+
+  /// Routes a configured global hotkey to its state-changing action.
+  @visibleForTesting
+  Future<void> handleHotkey(HotKey hotkey) async {
+    await manualRefresh();
+
+    final settings = _settingsCubit.state;
+    final HotkeyAction? action;
+    if (hotkey == settings.hotKey) {
+      action = HotkeyAction.toggle;
+    } else if (hotkey == settings.suspendHotKey) {
+      action = HotkeyAction.suspend;
+    } else if (hotkey == settings.resumeHotKey) {
+      action = HotkeyAction.resume;
+    } else {
+      action = null;
+    }
+
+    if (action != null) {
+      log.i('Triggering ${action.name} from hotkey press.');
+      await _performActiveWindowAction(action);
+      return;
+    }
+
+    final appSpecificHotkey = settings.appSpecificHotKeys.firstWhereOrNull(
+      (binding) => binding.hotkey == hotkey,
+    );
+    if (appSpecificHotkey == null) return;
+
+    log.i(
+      'Triggering toggle from app-specific hotkey press.\n'
+      'Hotkey: $hotkey\n'
+      'Executable: ${appSpecificHotkey.executable}',
+    );
+    await toggleExecutable(appSpecificHotkey.executable);
+  }
+
+  void _enqueueHotkey(HotKey hotkey) {
+    _hotkeyActionQueue = _hotkeyActionQueue.then((_) async {
+      try {
+        await handleHotkey(hotkey);
+      } catch (error, stackTrace) {
+        log.e(
+          'Failed to handle hotkey: ${hotkey.debugName}',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    });
   }
 
   /// Toggle suspend/resume for all instances of [window.process.executable].
@@ -252,30 +333,12 @@ class AppsListCubit extends Cubit<AppsListState> {
 
   /// React when a configured hotkey is pressed.
   void _listenForHotkey() {
-    _hotkeyService.hotkeyTriggeredStream.listen((hotkey) async {
-      await manualRefresh();
-
-      if (hotkey == _settingsCubit.state.hotKey) {
-        log.i('Triggering toggle from hotkey press.');
-        await toggleActiveWindow();
-      } else {
-        final appSpecificHotkey = _settingsCubit.state.appSpecificHotKeys
-            .firstWhereOrNull((e) => e.hotkey == hotkey);
-        if (appSpecificHotkey == null) return;
-
-        log.i(
-          'Triggering toggle from app-specific hotkey press.\n'
-          'Hotkey: $hotkey\n'
-          'Executable: ${appSpecificHotkey.executable}',
-        );
-        await toggleExecutable(appSpecificHotkey.executable);
-      }
-    });
+    _hotkeySubscription = _hotkeyService.hotkeyTriggeredStream.listen(_enqueueHotkey);
   }
 
   /// After the window is shown via the system tray, refresh the list of windows.
   void _listenForSystemTrayShowEvent() {
-    _systemTrayManager.eventStream.listen((event) async {
+    _systemTraySubscription = _systemTrayManager.eventStream.listen((event) async {
       if (event == SystemTrayEvent.windowShow) {
         await manualRefresh();
       }
@@ -365,7 +428,10 @@ class AppsListCubit extends Cubit<AppsListState> {
   @override
   Future<void> close() async {
     _timer?.cancel();
-    await super.close();
+    await _hotkeySubscription?.cancel();
+    await _systemTraySubscription?.cancel();
+    await _hotkeyActionQueue;
+    return await super.close();
   }
 }
 

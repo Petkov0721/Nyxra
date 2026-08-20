@@ -37,7 +37,7 @@ class ActiveWindow {
 
     bool successful;
     if (savedPid != null) {
-      successful = await _resume(savedPid);
+      successful = await _ensureResumed(savedPid);
       if (!successful) log.e('Failed to resume successfully.');
     } else {
       successful = await _suspend();
@@ -47,15 +47,105 @@ class ActiveWindow {
     return successful;
   }
 
-  Future<bool> _resume(int savedPid) async {
-    log.i('resuming, pid: $savedPid');
+  /// Ensure the tracked window is suspended.
+  ///
+  /// If there is no tracked window, the current foreground window becomes the
+  /// target. A tracked process which was resumed outside Nyrna is suspended
+  /// again without changing the target.
+  Future<bool> ensureSuspended() async {
+    log.i('Ensuring active window is suspended.');
 
-    final resumed = await _processRepository.resume(savedPid);
-    if (!resumed) {
-      log.e('Failed to resume! Try resuming process manually?');
-      // Must delete here, or enter infinite loop of failing to resume.
+    final savedPid = await _storageRepository.getValue(
+      'pid',
+      storageArea: 'activeWindow',
+    );
+
+    final bool successful;
+    if (savedPid == null) {
+      successful = await _suspend();
+    } else {
+      successful = await _ensureTrackedSuspended(savedPid);
+    }
+
+    if (!successful) log.e('Failed to ensure window is suspended.');
+    return successful;
+  }
+
+  /// Ensure the tracked window is resumed.
+  ///
+  /// With no tracked window this is a successful no-op. If the tracked process
+  /// was resumed outside Nyrna, its saved state is cleared and its window is
+  /// restored without attempting to resume the process again.
+  Future<bool> ensureResumed() async {
+    log.i('Ensuring active window is resumed.');
+
+    final savedPid = await _storageRepository.getValue(
+      'pid',
+      storageArea: 'activeWindow',
+    );
+    if (savedPid == null) {
+      log.i('No suspended window is being tracked.');
+      return true;
+    }
+
+    final successful = await _ensureResumed(savedPid);
+    if (!successful) log.e('Failed to ensure window is resumed.');
+    return successful;
+  }
+
+  Future<bool> _ensureTrackedSuspended(int savedPid) async {
+    log.i('Ensuring tracked process is suspended, pid: $savedPid');
+
+    if (!await _processRepository.exists(savedPid)) {
+      log.w('Tracked process $savedPid no longer exists.');
       await _deleteSavedIds();
+      return _suspend();
+    }
+
+    final status = await _processRepository.getProcessStatus(savedPid);
+    switch (status) {
+      case ProcessStatus.suspended:
+        log.i('Tracked process $savedPid is already suspended.');
+        return true;
+      case ProcessStatus.normal:
+        final suspended = await _processRepository.suspend(savedPid);
+        if (!suspended) {
+          log.e('Failed to suspend tracked process $savedPid.');
+          return false;
+        }
+        log.i('Suspended tracked process $savedPid successfully.');
+        return true;
+      case ProcessStatus.unknown:
+        log.e('Cannot suspend tracked process $savedPid: status is unknown.');
+        return false;
+    }
+  }
+
+  Future<bool> _ensureResumed(int savedPid) async {
+    log.i('Ensuring tracked process is resumed, pid: $savedPid');
+
+    if (!await _processRepository.exists(savedPid)) {
+      log.w('Tracked process $savedPid no longer exists.');
+      await _deleteSavedIds();
+      return true;
+    }
+
+    final status = await _processRepository.getProcessStatus(savedPid);
+    if (status == ProcessStatus.unknown) {
+      log.e('Cannot resume tracked process $savedPid: status is unknown.');
       return false;
+    }
+
+    if (status == ProcessStatus.suspended) {
+      final resumed = await _processRepository.resume(savedPid);
+      if (!resumed) {
+        log.e('Failed to resume! Try resuming process manually?');
+        // Must delete here, or enter infinite loop of failing to resume.
+        await _deleteSavedIds();
+        return false;
+      }
+    } else {
+      log.i('Tracked process $savedPid is already resumed.');
     }
 
     final windowId = await _storageRepository.getValue(
@@ -123,6 +213,18 @@ class ActiveWindow {
         }
       }
 
+      final pid = window.process.pid;
+      if (!await _processRepository.exists(pid)) {
+        log.w('Active process $pid no longer exists, retrying.');
+        continue;
+      }
+
+      final status = await _processRepository.getProcessStatus(pid);
+      if (status == ProcessStatus.unknown) {
+        log.e('Cannot suspend active process $pid: status is unknown.');
+        return false;
+      }
+
       await _minimize(window.id);
 
       // Small delay on Windows to ensure the window actually minimizes.
@@ -131,15 +233,19 @@ class ActiveWindow {
         await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      final suspended = await _processRepository.suspend(window.process.pid);
-      if (!suspended) {
-        log.e('Failed to suspend active window.');
-        return false;
+      if (status == ProcessStatus.normal) {
+        final suspended = await _processRepository.suspend(pid);
+        if (!suspended) {
+          log.e('Failed to suspend active window.');
+          return false;
+        }
+      } else {
+        log.i('Active process $pid is already suspended.');
       }
 
       await _storageRepository.saveValue(
         key: 'pid',
-        value: window.process.pid,
+        value: pid,
         storageArea: 'activeWindow',
       );
       await _storageRepository.saveValue(
@@ -147,7 +253,7 @@ class ActiveWindow {
         value: window.id,
         storageArea: 'activeWindow',
       );
-      log.i('Suspended ${window.process.pid} successfully');
+      log.i('Ensured $pid is suspended successfully');
 
       return true;
     }

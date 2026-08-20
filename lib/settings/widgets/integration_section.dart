@@ -28,9 +28,7 @@ class IntegrationSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Spacers.verticalMedium,
-        Text(
-          AppLocalizations.of(context)!.systemIntegrationTitle,
-        ),
+        Text(AppLocalizations.of(context)!.systemIntegrationTitle),
         Spacers.verticalXtraSmall,
         const _CloseToTrayTile(),
         const _AutostartTile(),
@@ -50,9 +48,7 @@ class _CloseToTrayTile extends StatelessWidget {
     return BlocBuilder<SettingsCubit, SettingsState>(
       builder: (context, state) {
         return SwitchListTile(
-          title: Text(
-            AppLocalizations.of(context)!.closeToTray,
-          ),
+          title: Text(AppLocalizations.of(context)!.closeToTray),
           secondary: const Icon(Icons.bedtime),
           value: state.closeToTray,
           onChanged: (bool value) async {
@@ -77,9 +73,7 @@ class _AutostartTile extends StatelessWidget {
       builder: (context, state) {
         return SwitchListTile(
           secondary: const Icon(Icons.start),
-          title: Text(
-            AppLocalizations.of(context)!.startAutomatically,
-          ),
+          title: Text(AppLocalizations.of(context)!.startAutomatically),
           value: state.autoStart,
           onChanged: (bool value) async {
             await settingsCubit.toggleAutostart();
@@ -103,9 +97,7 @@ class _StartHiddenTile extends StatelessWidget {
       builder: (context, state) {
         return SwitchListTile(
           secondary: const Icon(Icons.auto_awesome),
-          title: Text(
-            AppLocalizations.of(context)!.startInTray,
-          ),
+          title: Text(AppLocalizations.of(context)!.startInTray),
           value: state.startHiddenInTray,
           onChanged: (bool value) async {
             if (!state.closeToTray && value) {
@@ -135,53 +127,120 @@ class _HotkeyConfigWidget extends StatelessWidget {
       // through the DE.
       return ListTile(
         leading: const Icon(Icons.keyboard),
-        title: Text(
-          AppLocalizations.of(context)!.hotkey,
-        ),
+        title: Text(AppLocalizations.of(context)!.hotkey),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              AppLocalizations.of(context)!.waylandHotkeyMessage,
-            ),
+            Text(AppLocalizations.of(context)!.waylandHotkeyMessage),
             TextButton(
               style: TextButton.styleFrom(padding: EdgeInsets.zero),
               onPressed: () => context.read<AppCubit>().launchURL(kWaylandHotkeyDocsUrl),
-              child: Text(
-                AppLocalizations.of(context)!.waylandHotkeyDocsLink,
-              ),
+              child: Text(AppLocalizations.of(context)!.waylandHotkeyDocsLink),
             ),
           ],
         ),
       );
     }
 
+    return BlocBuilder<SettingsCubit, SettingsState>(
+      builder: (context, state) {
+        final localizations = AppLocalizations.of(context)!;
+
+        return Column(
+          children: [
+            _HotkeyTile(
+              title: localizations.toggleHotkey,
+              icon: Icons.sync,
+              action: HotkeyAction.toggle,
+              hotkey: state.hotkeyFor(HotkeyAction.toggle),
+            ),
+            _HotkeyTile(
+              title: localizations.suspendHotkey,
+              icon: Icons.pause,
+              action: HotkeyAction.suspend,
+              hotkey: state.hotkeyFor(HotkeyAction.suspend),
+            ),
+            _HotkeyTile(
+              title: localizations.resumeHotkey,
+              icon: Icons.play_arrow,
+              action: HotkeyAction.resume,
+              hotkey: state.hotkeyFor(HotkeyAction.resume),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _HotkeyTile extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final HotkeyAction action;
+  final HotKey? hotkey;
+
+  const _HotkeyTile({
+    required this.title,
+    required this.icon,
+    required this.action,
+    required this.hotkey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return ListTile(
-      title: Text(
-        AppLocalizations.of(context)!.hotkey,
-      ),
-      leading: const Icon(Icons.keyboard),
+      title: Text(title),
+      leading: Icon(icon),
       trailing: ElevatedButton(
-        onPressed: () => showDialog(
+        onPressed: () => _showHotkeyDialog(
           context: context,
-          builder: (context) => _RecordHotKeyDialog(
-            initialHotkey: settingsCubit.state.hotKey,
-          ),
+          action: action,
+          initialHotkey: hotkey,
         ),
-        child: BlocBuilder<SettingsCubit, SettingsState>(
-          builder: (context, state) {
-            return Text(hotkeyLabel(state.hotKey));
-          },
+        child: Text(
+          hotkey == null
+              ? AppLocalizations.of(context)!.hotkeyNotSet
+              : hotkeyLabel(hotkey!),
         ),
       ),
     );
   }
 }
 
+Future<void> _showHotkeyDialog({
+  required BuildContext context,
+  required HotkeyAction action,
+  required HotKey? initialHotkey,
+}) async {
+  await settingsCubit.removeHotkey(action);
+
+  if (!context.mounted) {
+    if (initialHotkey != null) {
+      await settingsCubit.updateHotkey(initialHotkey, action);
+    }
+    return;
+  }
+
+  final completed = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) =>
+        _RecordHotKeyDialog(action: action, initialHotkey: initialHotkey),
+  );
+
+  // A dialog should only be closed through its buttons, but restore the old
+  // registration if its route is removed unexpectedly.
+  if (completed != true && initialHotkey != null) {
+    await settingsCubit.updateHotkey(initialHotkey, action);
+  }
+}
+
 class _RecordHotKeyDialog extends StatefulWidget {
-  final HotKey initialHotkey;
+  final HotkeyAction action;
+  final HotKey? initialHotkey;
 
   const _RecordHotKeyDialog({
+    required this.action,
     required this.initialHotkey,
   });
 
@@ -191,82 +250,129 @@ class _RecordHotKeyDialog extends StatefulWidget {
 }
 
 class _RecordHotKeyDialogState extends State<_RecordHotKeyDialog> {
-  @override
-  void initState() {
-    super.initState();
-    settingsCubit.removeHotkey();
+  HotKey? _hotKey;
+  bool _isSaving = false;
+  String? _errorMessage;
+
+  Future<void> _reset() async {
+    setState(() => _isSaving = true);
+    final reset = await settingsCubit.resetHotkey(widget.action);
+
+    if (!mounted) return;
+
+    if (!reset) {
+      setState(() {
+        _isSaving = false;
+        _errorMessage = AppLocalizations.of(context)!.hotkeyAlreadyAssigned;
+      });
+      return;
+    }
+
+    Navigator.of(context).pop(true);
   }
 
-  HotKey? _hotKey;
+  Future<void> _cancel() async {
+    setState(() => _isSaving = true);
+
+    if (widget.initialHotkey != null) {
+      await settingsCubit.updateHotkey(widget.initialHotkey!, widget.action);
+    }
+
+    if (mounted) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  Future<void> _confirm() async {
+    final hotkey = _hotKey;
+    if (hotkey == null) return;
+
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+
+    final updated = await settingsCubit.updateHotkey(hotkey, widget.action);
+    if (!mounted) return;
+
+    if (updated) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+
+    setState(() {
+      _isSaving = false;
+      _errorMessage = AppLocalizations.of(context)!.hotkeyAlreadyAssigned;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      content: SingleChildScrollView(
-        child: ListBody(
-          children: <Widget>[
-            Row(
-              children: [
-                Text(
-                  AppLocalizations.of(context)!.recordNewHotkey,
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.restore),
-                  onPressed: () {
-                    settingsCubit.resetHotkey();
-                    Navigator.pop(context);
-                  },
-                ),
-              ],
-            ),
-            Container(
-              width: 100,
-              height: 60,
-              margin: const EdgeInsets.only(top: 20),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Theme.of(context).primaryColor,
-                ),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: SingleChildScrollView(
+          child: ListBody(
+            children: <Widget>[
+              Row(
                 children: [
-                  HotKeyRecorder(
-                    initalHotKey: widget.initialHotkey,
-                    onHotKeyRecorded: (hotKey) {
-                      _hotKey = hotKey;
-                      setState(() {});
-                    },
+                  Text(AppLocalizations.of(context)!.recordNewHotkey),
+                  const Spacer(),
+                  Tooltip(
+                    message: AppLocalizations.of(context)!.resetHotkey,
+                    child: IconButton(
+                      icon: const Icon(Icons.restore),
+                      onPressed: _isSaving ? null : _reset,
+                    ),
                   ),
                 ],
               ),
-            ),
-          ],
+              Container(
+                width: 100,
+                height: 60,
+                margin: const EdgeInsets.only(top: 20),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Theme.of(context).primaryColor),
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    HotKeyRecorder(
+                      initalHotKey: widget.initialHotkey,
+                      onHotKeyRecorded: (hotkey) {
+                        setState(() {
+                          _hotKey = hotkey;
+                          _errorMessage = null;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              if (_errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: _isSaving ? null : _cancel,
+            child: Text(AppLocalizations.of(context)!.cancel),
+          ),
+          TextButton(
+            onPressed: _hotKey == null || _isSaving ? null : _confirm,
+            child: Text(AppLocalizations.of(context)!.confirm),
+          ),
+        ],
       ),
-      actions: <Widget>[
-        TextButton(
-          child: Text(
-            AppLocalizations.of(context)!.cancel,
-          ),
-          onPressed: () {
-            settingsCubit.updateHotkey(widget.initialHotkey);
-            Navigator.of(context).pop();
-          },
-        ),
-        TextButton(
-          onPressed: _hotKey == null
-              ? null
-              : () {
-                  settingsCubit.updateHotkey(_hotKey!);
-                  Navigator.of(context).pop();
-                },
-          child: Text(
-            AppLocalizations.of(context)!.confirm,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -288,9 +394,7 @@ class _AppSpecificHotkeys extends StatelessWidget {
           child: Column(
             children: [
               ListTile(
-                title: Text(
-                  AppLocalizations.of(context)!.appSpecificHotkeys,
-                ),
+                title: Text(AppLocalizations.of(context)!.appSpecificHotkeys),
                 leading: const Icon(Icons.keyboard),
                 trailing: Tooltip(
                   message: AppLocalizations.of(context)!.appSpecificHotkeysTooltip,
@@ -348,15 +452,11 @@ class _AddAppSpecificHotkeyDialog extends StatelessWidget {
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                AppLocalizations.of(context)!.addAppSpecificHotkey,
-              ),
+              Text(AppLocalizations.of(context)!.addAppSpecificHotkey),
               const SizedBox(height: 20),
               DropdownButton<String>(
                 value: null,
-                hint: Text(
-                  AppLocalizations.of(context)!.selectApp,
-                ),
+                hint: Text(AppLocalizations.of(context)!.selectApp),
                 items: executables.map((executable) {
                   return DropdownMenuItem<String>(
                     value: executable,
@@ -371,9 +471,8 @@ class _AddAppSpecificHotkeyDialog extends StatelessWidget {
 
                   await showDialog(
                     context: context,
-                    builder: (context) => _RecordAppSpecificHotkeyDialog(
-                      executable: executable,
-                    ),
+                    builder: (context) =>
+                        _RecordAppSpecificHotkeyDialog(executable: executable),
                   );
 
                   navigator.pop();
@@ -390,9 +489,7 @@ class _AddAppSpecificHotkeyDialog extends StatelessWidget {
 class _RecordAppSpecificHotkeyDialog extends StatefulWidget {
   final String executable;
 
-  const _RecordAppSpecificHotkeyDialog({
-    required this.executable,
-  });
+  const _RecordAppSpecificHotkeyDialog({required this.executable});
 
   @override
   _RecordAppSpecificHotkeyDialogState createState() =>
@@ -401,6 +498,34 @@ class _RecordAppSpecificHotkeyDialog extends StatefulWidget {
 
 class _RecordAppSpecificHotkeyDialogState extends State<_RecordAppSpecificHotkeyDialog> {
   HotKey? _hotKey;
+  bool _isSaving = false;
+  String? _errorMessage;
+
+  Future<void> _confirm() async {
+    final hotkey = _hotKey;
+    if (hotkey == null) return;
+
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+
+    final added = await settingsCubit.addAppSpecificHotkey(
+      widget.executable,
+      hotkey,
+    );
+    if (!mounted) return;
+
+    if (added) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    setState(() {
+      _isSaving = false;
+      _errorMessage = AppLocalizations.of(context)!.hotkeyAlreadyAssigned;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -408,53 +533,49 @@ class _RecordAppSpecificHotkeyDialogState extends State<_RecordAppSpecificHotkey
       content: SingleChildScrollView(
         child: ListBody(
           children: <Widget>[
-            Text(
-              AppLocalizations.of(context)!.recordNewHotkey,
-            ),
+            Text(AppLocalizations.of(context)!.recordNewHotkey),
             Container(
               width: 100,
               height: 60,
               margin: const EdgeInsets.only(top: 20),
               decoration: BoxDecoration(
-                border: Border.all(
-                  color: Theme.of(context).primaryColor,
-                ),
+                border: Border.all(color: Theme.of(context).primaryColor),
               ),
               child: Stack(
                 alignment: Alignment.center,
                 children: [
                   HotKeyRecorder(
                     onHotKeyRecorded: (hotKey) {
-                      _hotKey = hotKey;
-                      setState(() {});
+                      setState(() {
+                        _hotKey = hotKey;
+                        _errorMessage = null;
+                      });
                     },
                   ),
                 ],
               ),
             ),
+            if (_errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  _errorMessage!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
       actions: <Widget>[
         TextButton(
-          child: Text(
-            AppLocalizations.of(context)!.cancel,
-          ),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+          child: Text(AppLocalizations.of(context)!.cancel),
         ),
         TextButton(
-          onPressed: _hotKey == null
-              ? null
-              : () {
-                  settingsCubit.addAppSpecificHotkey(
-                    widget.executable,
-                    _hotKey!,
-                  );
-                  Navigator.of(context).pop();
-                },
-          child: Text(
-            AppLocalizations.of(context)!.confirm,
-          ),
+          onPressed: _hotKey == null || _isSaving ? null : _confirm,
+          child: Text(AppLocalizations.of(context)!.confirm),
         ),
       ],
     );

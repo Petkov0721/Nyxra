@@ -18,5 +18,11 @@ void main() {
           : Win32ProcessRepository;
       expect(processRepository.runtimeType, expectedImplementation);
     });
+
+    test('recognizes the current process as alive', () async {
+      final processRepository = ProcessRepository.init();
+
+      expect(await processRepository.exists(pid), isTrue);
+    });
   });
 }
